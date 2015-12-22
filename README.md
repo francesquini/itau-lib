@@ -29,6 +29,7 @@ Entre as informações atualmente acessíveis pela biblioteca estão:
   
 
 Requisitos:
+-------------
 
 * É necessário possuir um **haskell-platform** e um **cabal** recente em funcionamento.
 
