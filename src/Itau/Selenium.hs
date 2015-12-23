@@ -61,6 +61,7 @@ seleniumRun dir action = do
     seleniumStart
     config <- myConfig dir
     _ <- runSession config $ do
+        setImplicitWait 100
         _ <- action
         closeSession
     seleniumStop
