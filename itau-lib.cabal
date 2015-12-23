@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                itau-lib
-version:             0.2.0.0
+version:             0.2.0.1
 synopsis:            Biblioteca para consulta e movimentação de contas Itau via Internet Banking
 -- description:         
 homepage:            https://github.com/francesquini/itau-lib
@@ -18,7 +18,8 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:      Itau
-  -- other-modules:       
+  other-modules:        Itau.Selenium,
+                        Itau.Utils
   -- other-extensions:    
   build-depends:        base >=4.8 && <4.9,
                         bytestring >=0.10,
