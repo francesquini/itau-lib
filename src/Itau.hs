@@ -1,6 +1,8 @@
 module Itau
      (
        getUserParams
+     , itauRun
+     , itauRunDir
      , login
      , logout
      , getCSV
@@ -21,10 +23,12 @@ import           Data.Text                    (Text, pack, toUpper)
 import qualified Data.Text                    as T
 import           Data.Time.Calendar
 import           Itau.Utils
+import           Itau.Selenium
 import           Test.WebDriver
 import qualified Test.WebDriver.Class         as WD
 import           Test.WebDriver.Commands.Wait
 import           Text.Printf
+import           System.Directory
 
 import           Debug.Trace
 
@@ -85,6 +89,14 @@ getUserParams = do
     nome    <- getUserInput "Primeiro nome: " True
     senha   <- getUserInput "Senha: " False
     return $ ItauUserParams agencia conta nome senha
+    
+itauRun :: WD a -> IO ()
+itauRun action = do 
+    dir <- getCurrentDirectory 
+    itauRunDir dir action
+
+itauRunDir :: String -> WD a -> IO ()
+itauRunDir = seleniumRun
 
 login :: ItauUserParams -> WD()
 login (ItauUserParams agencia conta nome senha) = do

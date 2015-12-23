@@ -15,9 +15,8 @@ import System.Process
 import Test.WebDriver
 import Test.WebDriver.Firefox.Profile
 
-myProfile :: IO (PreparedProfile Firefox)
-myProfile = do
-        dir <- getCurrentDirectory        
+myProfile :: String -> IO (PreparedProfile Firefox)
+myProfile dir =        
         prepareProfile $ 
              addPref "browser.download.useDownloadDir"               True
            $ addPref "browser.download.dir"                          dir
@@ -35,9 +34,9 @@ myProfile = do
            $ addPref "xpinstall.signatures.required"                 False
              defaultProfile
 
-myConfig :: IO WDConfig
-myConfig = do
-    pprof <- myProfile
+myConfig :: String -> IO WDConfig
+myConfig dir = do
+    pprof <- myProfile dir
     return $ defaultConfig {
         wdCapabilities = defaultCaps {
             browser = firefox {
@@ -57,10 +56,10 @@ checkAndDownloadSelenium fname = do
     where
         (Just url) = parseURI "http://selenium-release.storage.googleapis.com/2.46/selenium-server-standalone-2.46.0.jar"
 
-seleniumRun :: WD a -> IO ()
-seleniumRun action = do
+seleniumRun :: String -> WD a -> IO ()
+seleniumRun dir action = do
     seleniumStart
-    config <- myConfig
+    config <- myConfig dir
     _ <- runSession config $ do
         _ <- action
         closeSession
