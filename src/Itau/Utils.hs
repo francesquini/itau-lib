@@ -8,6 +8,7 @@ module Itau.Utils (
     , fracEquals2
     , fromItauNum
     , fromItauDate
+    , isBlank
     , ItauDateDirection (Forward, Backward, Current)
 ) where
 
@@ -23,6 +24,9 @@ import           Data.Time.Calendar
 import           Data.Text (Text)
 import           GHC.IO.Handle
 import           System.IO
+
+isBlank :: Text -> Bool
+isBlank = T.null . T.strip
 
 sleep :: Int -> IO()
 sleep msecs =
@@ -82,4 +86,5 @@ fromItauDate day direction t =
         (year, month, _) = toGregorian day
         pDate [d, m] =
             fromGregorian (yearGivenDirection year month (read m) direction) (read m) (read d)
-        pDate ~[d, m, y] = fromGregorian (read y) (read m) (read d)
+        pDate [d, m, y] = fromGregorian (read y) (read m) (read d)
+        pDate x = error $ show x

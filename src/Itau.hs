@@ -1,19 +1,19 @@
 module Itau
-     (
-       getUserParams
-     , itauRun
-     , itauRunDir
-     , login
-     , logout
-     , getCSV
-     , getOFX
-     , ItauAccountInfo
-     , getAccountInfo
-     , getCCInfo
-     , itauCardInfoToCSV
-     ) where
+    (
+      getUserParams
+    , itauRun
+    , itauRunDir
+    , login
+    , logout
+    , getCSV
+    , getOFX
+    , ItauAccountInfo
+    , getAccountInfo
+    , getCCInfo
+    , itauCardInfoToCSV
+    )
+     where
 
-import           Control.Exception.Base
 import           Control.Monad.IO.Class
 import           Data.List
 import           Data.Map                     (Map)
@@ -28,6 +28,7 @@ import           Test.WebDriver
 import qualified Test.WebDriver.Class         as WD
 import           Test.WebDriver.Commands.Wait
 import           Text.Printf
+import           Text.Regex
 import           System.Directory
 
 import           Debug.Trace
@@ -155,7 +156,7 @@ itauCardInfoToCSV :: ItauCardInfo -> Text
 itauCardInfoToCSV info =
     T.unlines $ map txToCSV txs
     where
-        txs = concat [ccfTxs $ ccProximaFatura info, ccfTxs $ ccFaturaAtual info, ccfTxs $ ccFaturaAnterior info]
+        txs = classificaCCParcelamento $ concat [ccfTxs $ ccProximaFatura info, ccfTxs $ ccFaturaAtual info, ccfTxs $ ccFaturaAnterior info]
 
 ---------------------
 -- LOCAL FUNCTIONS --
@@ -416,10 +417,42 @@ buildCCValorTotal' ([""]:[]:["Resumo da fatura em R$"]:xs) =
     Just . fromItauNum . last $ last xs
 buildCCValorTotal' _ = Nothing
 
+classificaCCParcelamento :: [ItauTransaction] -> [ItauTransaction]
+classificaCCParcelamento txs =
+        naoParcelados ++ geraParcelas [ (t, fromJust $ matchInfoParcelamento t) | t <- parcelados]
+    where
+        (parcelados, naoParcelados) = foldl (\(par, npar) tx -> if isTxParcelada tx then (tx:par, npar) else (par, tx:npar)) ([],[]) txs 
+
+regexParcelada :: Regex
+regexParcelada = mkRegex "^(.+)([0-9][0-9])/([0-9][0-9])$"
+
+matchInfoParcelamento :: ItauTransaction -> Maybe [String]
+matchInfoParcelamento tx = matchRegex regexParcelada $ T.unpack $ txDescricao tx
+
+isTxParcelada :: ItauTransaction -> Bool
+isTxParcelada = isJust . matchInfoParcelamento
+
+
+geraParcelas :: [(ItauTransaction, [String])] -> [ItauTransaction]
+geraParcelas xs = 
+        concatMap geraTransacoesPara $ Map.elems txs        
+    where
+        txs = Map.fromList [((txData tx, T.strip $ T.pack desc), (read ptot::Integer, T.strip $ T.pack desc, tx)) | (tx, [desc, _, ptot]) <- xs]
+        geraTransacoesPara (_, "DESCONTO ANUIDADE", tx) = [tx]
+        geraTransacoesPara (ptot, desc, tx) =
+            [ tx {
+                txData = addGregorianMonthsClip p $ txData tx, 
+                txDescricao = T.pack $ T.unpack desc ++ " - Parcela " ++ show (p + 1) ++ " de " ++ show ptot
+                }    
+            | p <- [0..ptot - 1]]
+
 buildCCFaturaTxs :: Day -> [Table] -> [ItauTransaction]
 buildCCFaturaTxs day tables =
-    buildCCFaturaInternationalTxs day tables ++ foldl (buildCCFaturaNationalTxs day) [] tables
-
+        intlTxs ++ natlTxs
+    where 
+        intlTxs = buildCCFaturaInternationalTxs day tables
+        natlTxs = foldl (buildCCFaturaNationalTxs day) [] tables
+        
 buildCCFaturaInternationalTxs :: Day -> [Table] -> [ItauTransaction]
 buildCCFaturaInternationalTxs day tables =
         buildTxs start end
@@ -440,7 +473,9 @@ buildCCFaturaNationalTxs day acc (["Movimentações"]:_header:lns) =
     in map (fromJust . toCCTx day "") lns1 ++ acc
 buildCCFaturaNationalTxs _ acc _ = acc
 
+
 toCCTx :: Day -> Text -> [Text] -> Maybe ItauTransaction
+toCCTx _ _ (" ":_) = Nothing
 toCCTx day origin [date, desc, value] = toCCTx day origin [date, desc, value, ""]
 toCCTx day origin [date, desc, value, flag] =
     Just ItauTransaction {
@@ -453,19 +488,21 @@ toCCTx day origin [date, desc, value, flag] =
 toCCTx _ _ _ = Nothing
 
 mergeIntlCCTx :: [[Text]] -> [[Text]]
-mergeIntlCCTx lns =
-        mergeIntlCCTx' lns1 []
+mergeIntlCCTx lns = 
+        mergeIntlCCTx' lns' []
     where
-        lns1 = filter (\l -> length l == 3) lns
-        mergeIntlCCTx' ([dt1, de1, va1]:[dt2, de2, va2]:xs) acc =
-            assert (T.null $ T.strip dt2) $
-            assert (not . T.null $ T.strip dt1) $
-            mergeIntlCCTx' xs ([dt1, wrapText de1 de2, va1, va2] : acc)
-        mergeIntlCCTx' ~[] acc = acc
-        wrapText pfx txt =
-            if T.null (T.strip txt)
-                then pfx
-                else T.concat [pfx, " (", txt, ")"]
+        lns' = filter (\l -> length l == 3) lns
+        mergeIntlCCTx' ([dt1, de1, va1]:xs) acc
+            | isBlank dt1 =
+                let [dt0, de0, va0, dc0] = head acc in
+                mergeIntlCCTx' xs ([dt0, wrapText de0 de1, va0, wrapText dc0 va1]: tail acc)
+            | otherwise = mergeIntlCCTx' xs ([dt1, de1, va1, ""]:acc)
+        mergeIntlCCTx' [] acc = acc
+        mergeIntlCCTx' x  _   = error $ show x
+        wrapText st nd 
+            | isBlank nd = st
+            | isBlank st = nd
+            | otherwise  = T.concat [st, " - ", nd]
 
 ccInfoSmokeTest :: ItauCardInfo -> Either Text ItauCardInfo
 ccInfoSmokeTest = Right --todo
@@ -489,10 +526,11 @@ emptyItauCardFatura =
 
 txToCSV :: ItauTransaction -> Text
 txToCSV tx =
-    T.concat $ intersperse ";" [dt, desc, val, orig, flag]
+                             -- date; paymode; info  ; payee; memo; amount; category; tags
+    T.concat $ intersperse ";" [dt  , "0"    , flag  , orig , desc, val   , ""      , ""]
     where
         dt   = pack . showGregorian $ txData tx
         desc = txDescricao tx
-        val  = pack $ show $ txValor tx
+        val  = T.pack $ printf "%.2f" $ txValor tx
         orig = txOrigem tx
         flag = txFlag tx
