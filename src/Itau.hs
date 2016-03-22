@@ -454,10 +454,12 @@ buildCCFaturaTxs day tables =
         natlTxs = foldl (buildCCFaturaNationalTxs day) [] tables
         
 buildCCFaturaInternationalTxs :: Day -> [Table] -> [ItauTransaction]
+buildCCFaturaInternationalTxs _   []     = []
 buildCCFaturaInternationalTxs day tables =
-        buildTxs start end
-    where start = dropWhile (\tbl -> head tbl /= ["Lançamentos internacionais"]) tables :: [Table]
-          end = (takeWhile (\l -> length l < 4) $ tail start) :: [Table]
+        buildTxs start end ++ buildCCFaturaInternationalTxs day next
+    where start = dropWhile (\tbl -> head tbl /= ["Lançamentos internacionais"]) tables
+          end   = takeWhile (\l -> length l < 4) $ drop 1 start
+          next  = dropWhile (\l -> length l < 4) $ drop 1 start
           buildTxs [] _ = []
           buildTxs (s:_) e =
               buildTxs' $ s  ++ concat e
