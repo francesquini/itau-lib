@@ -69,7 +69,10 @@ myFFProfile dir =
 
 myConfig :: Navegador -> String -> IO WDConfig
 myConfig CH dir =
-    return $ useBrowser chrome def
+    return $ useBrowser chrome {
+            chromeOptions = ["--start-maximized"]
+        }
+        def
     where
         def = defaultConfig {
             wdCapabilities = defaultCaps {
@@ -103,15 +106,20 @@ checkAndDownloadSelenium fname = do
         (Just url) = parseURI "http://selenium-release.storage.googleapis.com/2.53/selenium-server-standalone-2.53.0.jar"
 
 seleniumRun :: Navegador -> String -> WD a -> IO ()
-seleniumRun navegador dir action = do
-    seleniumStart
-    config <- myConfig navegador dir
-    _ <- runSession config $ do
-        setImplicitWait 100
-        _ <- action
-        closeSession
-    seleniumStop
-    return ()
+seleniumRun nav dir action = 
+    seleniumRun' `catch` exHandler `finally` seleniumStop
+    where 
+        exHandler :: SomeException -> IO ()
+        exHandler e = putStrLn $ "Erro durante a execução" ++ displayException e
+        seleniumRun' :: IO ()
+        seleniumRun' = do
+            seleniumStart
+            config <- myConfig nav dir
+            _ <- runSession config $ finallyClose $ do
+                setImplicitWait 100
+                _ <- action
+                return ()
+            return ()
 
 seleniumStart :: IO ()
 seleniumStart = do
