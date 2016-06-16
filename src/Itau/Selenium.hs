@@ -1,22 +1,55 @@
 module Itau.Selenium
-    ( seleniumRun
+    ( seleniumRun,
+      Navegador (FF, CH),
+      sleep,
+      waitElemFound,
+      clickAndWait,
+      tryClickAndWait,
+      tryClickAndWaitElem
     ) where
 
-import Control.Exception
-import Control.Monad
+import           Control.Concurrent
+import           Control.Exception
+import           Control.Monad
+import           Control.Monad.IO.Class
+import           Data.Aeson.Types 
 import qualified Data.ByteString as B
-import Data.List
-import GHC.IO.Handle
-import Network.HTTP
-import Network.URI (parseURI)
-import System.Directory
-import System.Environment.Executable
-import System.Process
-import Test.WebDriver
-import Test.WebDriver.Firefox.Profile
+import           Data.List
+import           Data.Text (pack)
+import           GHC.IO.Handle
+import           Network.HTTP
+import           Network.URI (parseURI)
+import           System.Directory
+import           System.Environment.Executable
+import           System.Process
+import           Test.WebDriver
+import           Test.WebDriver.Class
+import           Test.WebDriver.Commands.Wait
+import           Test.WebDriver.Firefox.Profile
+data Navegador = FF | CH
 
-myProfile :: String -> IO (PreparedProfile Firefox)
-myProfile dir =        
+sleep :: Int -> IO()
+sleep msecs =
+    threadDelay $ msecs * 1000
+
+waitElemFound :: (MonadIO wd, WebDriver wd) => Selector -> wd Element
+waitElemFound sel =
+    waitUntil 30 $ findElem sel
+
+clickAndWait :: (MonadIO wd, WebDriver wd) => wd Element -> wd ()
+clickAndWait el = do
+    el >>= click
+    liftIO $ sleep 3000
+    return ()
+
+tryClickAndWaitElem :: (MonadIO wd, WebDriver wd) => Selector -> wd ()
+tryClickAndWaitElem el = tryClickAndWait $ findElem el
+
+tryClickAndWait :: (MonadIO wd, WebDriver wd) => wd Element -> wd ()
+tryClickAndWait el = waitUntil 30 $ clickAndWait el
+
+myFFProfile :: String -> IO (PreparedProfile Firefox)
+myFFProfile dir =        
         prepareProfile $ 
              addPref "browser.download.useDownloadDir"               True
            $ addPref "browser.download.dir"                          dir
@@ -34,11 +67,24 @@ myProfile dir =
            $ addPref "xpinstall.signatures.required"                 False
              defaultProfile
 
-myConfig :: String -> IO WDConfig
-myConfig dir = do
-    pprof <- myProfile dir
+myConfig :: Navegador -> String -> IO WDConfig
+myConfig CH dir =
+    return $ useBrowser chrome def
+    where
+        def = defaultConfig {
+            wdCapabilities = defaultCaps {
+                additionalCaps = [
+                    ("download.default_directory", String $ pack dir), 
+                    ("directory_upgrade", Bool True),
+                    ("extensions_to_open", String $ pack "")
+                    ]
+                }
+        }
+myConfig FF dir = do
+    pprof <- myFFProfile dir
     return $ defaultConfig {
         wdCapabilities = defaultCaps {
+            additionalCaps = [("marionette", Bool True)],
             browser = firefox {
                 ffProfile = Just  pprof
             }
@@ -54,12 +100,12 @@ checkAndDownloadSelenium fname = do
             B.writeFile fname bytes
             putStrLn "Download terminado"
     where
-        (Just url) = parseURI "http://selenium-release.storage.googleapis.com/2.46/selenium-server-standalone-2.46.0.jar"
+        (Just url) = parseURI "http://selenium-release.storage.googleapis.com/2.53/selenium-server-standalone-2.53.0.jar"
 
-seleniumRun :: String -> WD a -> IO ()
-seleniumRun dir action = do
+seleniumRun :: Navegador -> String -> WD a -> IO ()
+seleniumRun navegador dir action = do
     seleniumStart
-    config <- myConfig dir
+    config <- myConfig navegador dir
     _ <- runSession config $ do
         setImplicitWait 100
         _ <- action
@@ -76,8 +122,8 @@ seleniumStart = do
         putStrLn "Iniciando Selenium Server"
         waitStart st_err
     where
-        -- hardcoded, por enquanto, com a versão 2.46
-        bname = "selenium-server-standalone-2.46.0.jar"
+        -- hardcoded, por enquanto, com a versão 2.53
+        bname = "selenium-server-standalone-2.53.0.jar"
         fullFilePath path = path ++ bname
         waitStart fstream = do
             ln <- hGetLine fstream

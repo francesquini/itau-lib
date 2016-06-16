@@ -11,9 +11,11 @@ module Itau
     , getAccountInfo
     , getCCInfo
     , itauCardInfoToCSV
+    , Navegador (FF, CH)
     )
      where
 
+import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.List
 import           Data.Map                     (Map)
@@ -26,11 +28,11 @@ import           Itau.Utils
 import           Itau.Selenium
 import           Test.WebDriver
 import qualified Test.WebDriver.Class         as WD
-import           Test.WebDriver.Commands.Wait
 import           Text.Printf
 import           Text.Regex
 import           System.Directory
-
+import           System.FilePath
+import           System.Process
 import           Debug.Trace
 
 data ItauUserParams = ItauUserParams
@@ -82,7 +84,6 @@ data ItauCardInfo = ItauCardInfo {
 type Cell = Text
 type Table = [[Cell]]
 
-
 getUserParams :: IO ItauUserParams
 getUserParams = do
     agencia <- getUserInput "Agência: " True
@@ -90,37 +91,47 @@ getUserParams = do
     nome    <- getUserInput "Primeiro nome: " True
     senha   <- getUserInput "Senha: " False
     return $ ItauUserParams agencia conta nome senha
-    
-itauRun :: WD a -> IO ()
-itauRun action = do 
-    dir <- getCurrentDirectory 
-    itauRunDir dir action
 
-itauRunDir :: String -> WD a -> IO ()
-itauRunDir = seleniumRun
+itauRun :: Navegador -> WD a -> IO ()
+itauRun navegador action = do 
+    dir <- getCurrentDirectory 
+    itauRunDir navegador dir action
+
+itauRunDir :: Navegador -> String -> WD a -> IO ()
+itauRunDir FF dir act = seleniumRun FF dir act
+itauRunDir CH dir act = do
+    downDir <- (head . lines) <$> readProcess "xdg-user-dir" ["DOWNLOAD"] ""
+    filesBef <- getDirectoryContents downDir
+    seleniumRun CH dir act
+    filesAft <- getDirectoryContents downDir
+    let newFiles = filesAft \\ filesBef
+    unless (null newFiles) 
+        (putStrLn $ "Executando workaround para o download_dir do chrome nos arquivos: \n" ++ unlines newFiles)
+    _ <- mapM (\f -> copyFile (combine downDir f) (combine dir f)) newFiles
+    return ()
 
 login :: ItauUserParams -> WD()
 login (ItauUserParams agencia conta nome senha) = do
     openPage "http://www.itau.com.br"
     -- Primeira etapa, digita ag/cc e pede acesso
-    findElem (ById "campo_agencia") >>= sendKeys (pack agencia)
+    waitElemFound (ById "campo_agencia") >>= sendKeys (pack agencia)
     findElem (ById "campo_conta")   >>= sendKeys (pack conta)
-    findElem (ByLinkText "Acessar") >>= click
+    tryClickAndWaitElem (ByLinkText "Acessar")
     -- Seleciona o usuário
-    _ <- waitUntil 30 $ findElem (ByLinkText $ toUpper (pack nome)) >>= click
-    liftIO $ sleep 500
+    tryClickAndWaitElem (ByLinkText $ toUpper (pack nome))
     -- Digita a senha
     allButtons <- findPasswordButtons senha
     let bs = map (\s -> fromJust (Map.lookup s allButtons)) senha
     _ <- mapM click bs
-    liftIO $ sleep 500
     -- Completa o login
-    findElem (ByCSS "img[alt=\"Continuar\"]") >>= click
+    tryClickAndWaitElem (ByCSS "img[alt=\"Continuar\"]")
+    _ <- waitElemFound (ByLinkText "Conta Corrente")
+    return ()
 
 logout :: WD()
 logout = do
-    findElem (ByCSS "img.btnSair") >>= click
-    findElem (ByCSS "img[alt=\"Sair\"]") >>= click
+    tryClickAndWaitElem (ByCSS "img.btnSair") 
+    tryClickAndWaitElem (ByCSS "img[alt=\"Sair\"]")
     liftIO $ sleep 5000 -- Aguarda alguns segundos para ter certeza que o logout terminou
 
 getOFX :: WD()
@@ -181,8 +192,6 @@ findPasswordButtons' (d:ds) found = do
     where
         fElems x = findElems $ ByCSS (pack $ "img[title=\"" ++ x ++ "\"]")
 
-
-
 possibleButtons :: [String]
 possibleButtons =
         map inter $ comb 2 ['0'..'9']
@@ -190,44 +199,43 @@ possibleButtons =
         inter :: String -> String
         inter x = intercalate " ou " (map (:[]) x)
 
-
 ---------------------
 -- Navigation
 ---------------------
 
 goToExtrato :: WD ()
 goToExtrato = do
-    waitUntil 30 $ findElem (ByLinkText "Conta Corrente") >>= click
-    waitUntil 30 $ findElem (ByLinkText "Extrato") >>= click
-    _ <- waitUntil 30 $ findElem (ById "ExtratoX0")
+    tryClickAndWaitElem (ByLinkText "Conta Corrente")
+    tryClickAndWaitElem (ByLinkText "Extrato")
+    _ <- waitElemFound (ById "ExtratoX0")
     return ()
 
 
 goToCartao :: WD ()
 goToCartao = do
-    findElem (ByLinkText "Cartões") >>= click
-    _ <- waitUntil 30 $ findElem (ByLinkText "Ver fatura e limites") >>= click
-    _ <- waitUntil 30 $ findElem (ByCSS "img[alt=\"Fatura anterior\"]")
+    tryClickAndWaitElem (ByLinkText "Cartões") 
+    tryClickAndWaitElem (ByLinkText "Ver fatura e limites")
+    _ <- waitElemFound (ByCSS "img[alt=\"Fatura anterior\"]")
     return ()
 
 --precisa ja estar dentro do cartao e nao pode estar na fatura atual
 goToFaturaAtual :: WD ()
 goToFaturaAtual = do
-    findElem (ByCSS "img[alt=\"Fatura atual\"]") >>= click
-    _ <- waitUntil 30 $ findElem (ByCSS "img[alt=\"Fatura anterior\"]") -- o link clicado some, checa outro item
+    tryClickAndWaitElem (ByCSS "img[alt=\"Fatura atual\"]")
+    _ <- waitElemFound (ByCSS "img[alt=\"Fatura anterior\"]") -- o link clicado some, checa outro item
     return ()
 
 --precisa ja estar dentro do cartao e nao pode estar na fatura anterior
 goToFaturaAnterior :: WD ()
 goToFaturaAnterior = do
-    findElem (ByCSS "img[alt=\"Fatura anterior\"]") >>= click
-    _ <- waitUntil 30 $ findElem (ByCSS "img[alt=\"Fatura atual\"]") -- o link clicado some, checa outro item
+    tryClickAndWaitElem (ByCSS "img[alt=\"Fatura anterior\"]")
+    _ <- waitElemFound (ByCSS "img[alt=\"Fatura atual\"]") -- o link clicado some, checa outro item
     return ()
 
 goToFaturaProxima :: WD ()
 goToFaturaProxima = do
-    findElem (ByCSS "img[alt=\"Próxima fatura\"]") >>= click
-    _ <- waitUntil 30 $ findElem (ByCSS "img[alt=\"Fatura atual\"]") -- o link clicado some, checa outro item
+    tryClickAndWaitElem (ByCSS "img[alt=\"Próxima fatura\"]")
+    _ <- waitElemFound (ByCSS "img[alt=\"Fatura atual\"]") -- o link clicado some, checa outro item
     return ()
 
 ---------------------
@@ -245,17 +253,18 @@ getFileDownloadStartDate = do
 downloadFileType :: Text -> WD ()
 downloadFileType fType = do
     goToExtrato
-    waitUntil 30 $ findElem (ByLinkText "Salvar em outros formatos") >>= click
+    
+    tryClickAndWaitElem (ByLinkText "Salvar em outros formatos")
     (year, month, day) <- liftIO getFileDownloadStartDate
-    liftIO $ sleep 5000 -- Apesar da página completa, um script passa zerando os valores dos campos se formos muito rápido
-    waitUntil 30 $ findElem (ById "Dia") >>= sendKeys day
+    liftIO $ sleep 3000 -- Apesar da página completa, um script passa zerando os valores dos campos se formos muito rápido
+    waitElemFound (ById "Dia") >>= sendKeys day
     liftIO $ sleep 500
-    waitUntil 30 $ findElem (ById "Mes") >>= sendKeys month
+    waitElemFound (ById "Mes") >>= sendKeys month
     liftIO $ sleep 500
-    waitUntil 30 $ findElem (ById "Ano") >>= sendKeys year
+    waitElemFound (ById "Ano") >>= sendKeys year
     liftIO $ sleep 500
-    waitUntil 30 $ findElem (ByCSS (T.concat ["input[value=\"", fType, "\"]"])) >>= click
-    waitUntil 30 $ findElem (ByCSS "img.TRNinputBTN") >>= click
+    tryClickAndWaitElem (ByCSS (T.concat ["input[value=\"", fType, "\"]"]))
+    tryClickAndWaitElem (ByCSS "img.TRNinputBTN")
     liftIO $ sleep 5000 -- aguarda alguns segundos pra que o download tenha acabado
 
 ---------------------
@@ -394,7 +403,7 @@ scrapAndBuildCCFatura open = do
         rowsToCells :: [Element] -> WD [[Element]]
         rowsToCells = mapM (`findElemsFrom` ByTag "td")
         cellsToText :: [[Element]] -> WD Table
-        cellsToText = mapM (mapM getText)
+        cellsToText = mapM (mapM getText) 
 
 buildCCFatura :: Day -> [Text] -> Bool -> [Table] -> ItauCardFatura
 buildCCFatura day boxDivs open tables =
@@ -529,7 +538,7 @@ emptyItauCardFatura =
 txToCSV :: ItauTransaction -> Text
 txToCSV tx =
                              -- date; paymode; info  ; payee; memo; amount; category; tags
-    T.concat $ intersperse ";" [dt  , "0"    , flag  , orig , desc, val   , ""      , ""]
+    T.concat $ intersperse ";" [dt  , "0"    , flag  , ""   , desc, val   , ""      , orig]
     where
         dt   = pack . showGregorian $ txData tx
         desc = txDescricao tx

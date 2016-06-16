@@ -1,7 +1,6 @@
 module Itau.Utils (
       withEcho
     , getUserInput
-    , sleep
     , today
     , comb
     , fracEquals
@@ -12,7 +11,6 @@ module Itau.Utils (
     , ItauDateDirection (Forward, Backward, Current)
 ) where
 
-import           Control.Concurrent
 import           Control.Exception
 import           Control.Monad
 import qualified Data.Foldable as F
@@ -27,10 +25,6 @@ import           System.IO
 
 isBlank :: Text -> Bool
 isBlank = T.null . T.strip
-
-sleep :: Int -> IO()
-sleep msecs =
-    threadDelay $ msecs * 1000
 
 today :: IO Day
 today = do
