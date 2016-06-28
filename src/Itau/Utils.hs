@@ -3,6 +3,7 @@ module Itau.Utils (
     , getUserInput
     , today
     , comb
+    , formatDayMMMYYYY
     , fracEquals
     , fracEquals2
     , fromItauNum
@@ -82,3 +83,11 @@ fromItauDate day direction t =
             fromGregorian (yearGivenDirection year month (read m) direction) (read m) (read d)
         pDate [d, m, y] = fromGregorian (read y) (read m) (read d)
         pDate x = error $ show x
+
+formatDayMMMYYYY :: Day -> String        
+formatDayMMMYYYY d = 
+    let (y, m, _) = toGregorian d in 
+    show y ++ "-" ++ (meses !! (m - 1))
+    where 
+        meses = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"]
+            

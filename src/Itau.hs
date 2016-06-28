@@ -66,6 +66,7 @@ data ItauTransaction = ItauTransaction {
     , txValor     :: Float
     , txOrigem    :: Text
     , txFlag      :: Text
+    , txMisc      :: Maybe Day
     } deriving Show
 
 data ItauCardFatura = ItauCardFatura {
@@ -168,7 +169,7 @@ itauCardInfoToCSV info =
     T.unlines $ map txToCSV txs
     where
         txs = classificaCCParcelamento $ concat [ccfTxs $ ccProximaFatura info, ccfTxs $ ccFaturaAtual info, ccfTxs $ ccFaturaAnterior info]
-
+            
 ---------------------
 -- LOCAL FUNCTIONS --
 ---------------------
@@ -379,7 +380,8 @@ matchAndFillFutureTxs day ls accInfo =
             , txDescricao = desc
             , txValor     = fromItauNum val
             , txOrigem    = orig
-            , txFlag      = flag}
+            , txFlag      = flag
+            , txMisc      = Nothing}
 
 ---------------------
 -- Credit Card
@@ -409,12 +411,12 @@ buildCCFatura :: Day -> [Text] -> Bool -> [Table] -> ItauCardFatura
 buildCCFatura day boxDivs open tables =
         emptyItauCardFatura {
               ccfAberta = open
-            , ccfVencimento = getVencimento
+            , ccfVencimento = vencimento
             , ccfValorTotal = buildCCValorTotal tables
-            , ccfTxs = buildCCFaturaTxs day tables
+            , ccfTxs = buildCCFaturaTxs vencimento day tables
         }
     where
-        getVencimento = fromItauDate day Backward $ dropWhile (/= "vencimento") boxDivs !! 1
+        vencimento = fromItauDate day Backward $ dropWhile (/= "vencimento") boxDivs !! 1
 
 
 buildCCValorTotal :: [Table] -> Float
@@ -430,7 +432,8 @@ classificaCCParcelamento :: [ItauTransaction] -> [ItauTransaction]
 classificaCCParcelamento txs =
         naoParcelados ++ geraParcelas [ (t, fromJust $ matchInfoParcelamento t) | t <- parcelados]
     where
-        (parcelados, naoParcelados) = foldl (\(par, npar) tx -> if isTxParcelada tx then (tx:par, npar) else (par, tx:npar)) ([],[]) txs 
+        (parcelados, naoParcelados) = foldl 
+            (\(par, npar) tx -> if isTxParcelada tx then (tx:par, npar) else (par, tx:npar)) ([],[]) txs 
 
 regexParcelada :: Regex
 regexParcelada = mkRegex "^(.+)([0-9][0-9])/([0-9][0-9])$"
@@ -446,26 +449,31 @@ geraParcelas :: [(ItauTransaction, [String])] -> [ItauTransaction]
 geraParcelas xs = 
         concatMap geraTransacoesPara $ Map.elems txs        
     where
-        txs = Map.fromList [((txData tx, T.strip $ T.pack desc), (read ptot::Integer, T.strip $ T.pack desc, tx)) | (tx, [desc, _, ptot]) <- xs]
-        geraTransacoesPara (_, "DESCONTO ANUIDADE", tx) = [tx]
-        geraTransacoesPara (ptot, desc, tx) =
+        -- O map é para deduplicar os lancamentos
+        txs = Map.fromList [
+            ((txData tx, T.strip $ T.pack desc), 
+            (read pn :: Integer, read ptot :: Integer, T.strip $ T.pack desc, tx)) 
+            | (tx, [desc, pn, ptot]) <- xs]
+        geraTransacoesPara (_, _, "DESCONTO ANUIDADE", tx) = [tx]
+        geraTransacoesPara (pn, ptot, desc, tx) =
             [ tx {
-                txData = addGregorianMonthsClip p $ txData tx, 
+                txData = addGregorianMonthsClip p $ txData tx,
+                txMisc = addGregorianMonthsClip (p - pn + 1) <$> txMisc tx,
                 txDescricao = T.pack $ T.unpack desc ++ " - Parcela " ++ show (p + 1) ++ " de " ++ show ptot
                 }    
             | p <- [0..ptot - 1]]
 
-buildCCFaturaTxs :: Day -> [Table] -> [ItauTransaction]
-buildCCFaturaTxs day tables =
+buildCCFaturaTxs :: Day -> Day -> [Table] -> [ItauTransaction]
+buildCCFaturaTxs venc day tables =
         intlTxs ++ natlTxs
     where 
-        intlTxs = buildCCFaturaInternationalTxs day tables
-        natlTxs = foldl (buildCCFaturaNationalTxs day) [] tables
+        intlTxs = buildCCFaturaInternationalTxs venc day tables
+        natlTxs = foldl (buildCCFaturaNationalTxs venc day) [] tables
         
-buildCCFaturaInternationalTxs :: Day -> [Table] -> [ItauTransaction]
-buildCCFaturaInternationalTxs _   []     = []
-buildCCFaturaInternationalTxs day tables =
-        buildTxs start end ++ buildCCFaturaInternationalTxs day next
+buildCCFaturaInternationalTxs :: Day -> Day -> [Table] -> [ItauTransaction]
+buildCCFaturaInternationalTxs _    _   []     = []
+buildCCFaturaInternationalTxs venc day tables =
+        buildTxs start end ++ buildCCFaturaInternationalTxs venc day next
     where start = dropWhile (\tbl -> head tbl /= ["Lançamentos internacionais"]) tables
           end   = takeWhile (\l -> length l < 4) $ drop 1 start
           next  = dropWhile (\l -> length l < 4) $ drop 1 start
@@ -473,30 +481,30 @@ buildCCFaturaInternationalTxs day tables =
           buildTxs (s:_) e =
               buildTxs' $ s  ++ concat e
           buildTxs' ~(["Lançamentos internacionais"]:[origin]:_header:lns) =
-              fromJust . sequence . filter isJust $ map (toCCTx day origin) $ mergeIntlCCTx lns
+              fromJust . sequence . filter isJust $ map (toCCTx venc day origin) $ mergeIntlCCTx lns
 
-buildCCFaturaNationalTxs :: Day -> [ItauTransaction] -> Table -> [ItauTransaction]
-buildCCFaturaNationalTxs day acc (["Lançamentos nacionais"]:[origin]:_header:lns) =
-    let txs = fromJust . sequence . filter isJust $ map (toCCTx day origin) lns
+buildCCFaturaNationalTxs :: Day -> Day -> [ItauTransaction] -> Table -> [ItauTransaction]
+buildCCFaturaNationalTxs venc day acc (["Lançamentos nacionais"]:[origin]:_header:lns) =
+    let txs = fromJust . sequence . filter isJust $ map (toCCTx venc day origin) lns
     in txs ++ acc
-buildCCFaturaNationalTxs day acc (["Movimentações"]:_header:lns) =
+buildCCFaturaNationalTxs venc day acc (["Movimentações"]:_header:lns) =
     let lns1 = takeWhile (\l -> length l == 3) lns
-    in map (fromJust . toCCTx day "") lns1 ++ acc
-buildCCFaturaNationalTxs _ acc _ = acc
+    in map (fromJust . toCCTx venc day "") lns1 ++ acc
+buildCCFaturaNationalTxs _ _ acc _ = acc
 
-
-toCCTx :: Day -> Text -> [Text] -> Maybe ItauTransaction
-toCCTx _ _ (" ":_) = Nothing
-toCCTx day origin [date, desc, value] = toCCTx day origin [date, desc, value, ""]
-toCCTx day origin [date, desc, value, flag] =
+toCCTx :: Day -> Day -> Text -> [Text] -> Maybe ItauTransaction
+toCCTx _ _ _ (" ":_) = Nothing
+toCCTx venc day origin [date, desc, value] = toCCTx venc day origin [date, desc, value, ""]
+toCCTx venc day origin [date, desc, value, flag] =
     Just ItauTransaction {
       txData      = fromItauDate day Backward date
     , txDescricao = desc
     , txValor     = negate $ fromItauNum value
     , txOrigem    = origin
     , txFlag      = flag
+    , txMisc      = Just venc
     }
-toCCTx _ _ _ = Nothing
+toCCTx _ _ _ _ = Nothing
 
 mergeIntlCCTx :: [[Text]] -> [[Text]]
 mergeIntlCCTx lns = 
@@ -538,10 +546,10 @@ emptyItauCardFatura =
 txToCSV :: ItauTransaction -> Text
 txToCSV tx =
                              -- date; paymode; info  ; payee; memo; amount; category; tags
-    T.concat $ intersperse ";" [dt  , "0"    , flag  , ""   , desc, val   , ""      , orig]
+    T.concat $ intersperse ";" [dt  , "0"    , info  , ""   , desc, val   , ""      , orig]
     where
         dt   = pack . showGregorian $ txData tx
         desc = txDescricao tx
         val  = T.pack $ printf "%.2f" $ txValor tx
         orig = txOrigem tx
-        flag = txFlag tx
+        info = T.strip $ T.concat [T.pack $ maybe "" (\d -> "Venc: " ++ formatDayMMMYYYY d) (txMisc tx), " ", txFlag tx]
