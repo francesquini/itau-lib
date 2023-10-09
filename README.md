@@ -1,7 +1,7 @@
 itau-lib
 ========
 
-Esta é uma biblioteca em Haskell para automatizar o acesso às informações de contas do Banco Itaú. Por hora ela pode ser usada apenas para consultas. 
+Esta é uma biblioteca em Haskell para automatizar o acesso às informações de contas do Banco Itaú. Por ora ela pode ser usada apenas para consultas. 
 
 Este não é um aplicativo final, mas uma biblioteca. Se você está interessado em ferramentas prontas para auxiliar a conciliação bancária em aplicativos como Quicken, Microsoft Money, GNUCash e HomeBank (ou qualquer outro compatível com o formato OFX), incluíndo outros bancos como Banco do Brasil, Caixa Econômica, Itaú e Santander, você provavelmente está atrás deste outro projeto (que alias, utiliza esta biblioteca): https://github.com/maxiwell/ofx-bot.
 
